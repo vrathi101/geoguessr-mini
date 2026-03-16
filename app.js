@@ -7,10 +7,11 @@
 "use strict";
 
 // ─── Constants ───────────────────────────────────────────
-const TOTAL_ROUNDS   = 5;
-const MAX_SCORE      = 5000;
-const SCORE_K        = 2_000_000; // meters — world-map decay constant
-const MAX_RETRIES    = 30;        // retries per location search
+const TOTAL_ROUNDS      = 5;
+const MAX_SCORE         = 5000;
+const SCORE_K           = 2_000_000; // meters — world-map decay constant
+const MAX_RETRIES       = 30;        // retries per location search
+const STREAK_THRESHOLD  = 4000;      // base score needed to extend streak
 
 // ─── Zone Definitions ────────────────────────────────────
 // Each entry: [minLat, maxLat, minLng, maxLng, weight]
@@ -72,6 +73,16 @@ function buildWeights(zones) {
 
 const WORLD_WEIGHTS   = buildWeights(WORLD_ZONES);
 const CURATED_WEIGHTS = buildWeights(CURATED_ZONES);
+
+// ─── Seeded PRNG (LCG) ───────────────────────────────────
+// Returns a deterministic pseudo-random function for a given integer seed.
+function createRng(seed) {
+  let s = (seed >>> 0) || 1;
+  return () => {
+    s = (Math.imul(1664525, s) + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+}
 
 // ─── Game Config State ───────────────────────────────────
 let gameConfig = { timer: 0, difficulty: 'world', noMove: false };
@@ -376,9 +387,10 @@ function autoSubmitRound() {
   if (roundSubmitted) return;
   roundSubmitted = true;
   stopTimer();
+  streakCount = 0;  // timeout breaks streak
   roundScores.push(0);
   window._allGuesses.push(null);
-  showRoundResult(0, null, null);
+  showRoundResult(0, 1, null);
 }
 
 // ─── Share Card ───────────────────────────────────────────
@@ -396,12 +408,14 @@ async function copyShareCard() {
   const modeLabel = gameConfig.noMove ? 'No Move' : 'Move';
   const emojis = roundScores.map(s => scoreEmoji(s)).join(' ');
 
+  const seedStr = gameSeed ? `Seed: ${gameSeed.toString(36)}` : '';
   const card = [
     `GeoGuessr Mini • ${total.toLocaleString()}/${(TOTAL_ROUNDS * MAX_SCORE).toLocaleString()}`,
     `${diffLabel} | ${timerLabel} | ${modeLabel}`,
+    seedStr,
     '',
     emojis,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 
   const btn = document.getElementById('btn-share');
 
@@ -429,8 +443,13 @@ let locations        = [];     // Array of {lat, lng} for all rounds
 let roundIndex       = 0;      // Current round (0-based)
 let roundScores      = [];     // Scores per round
 let roundSubmitted   = false;  // Guard against double-submission per round
+let streakCount      = 0;      // Consecutive rounds scoring >= STREAK_THRESHOLD
+let gameSeed         = 0;      // Current game seed (for sharing via URL)
+let rng              = null;   // Seeded RNG function; null = Math.random
 let guessLatLng      = null;   // google.maps.LatLng of current guess
 let guessMarker      = null;   // AdvancedMarkerElement on guess map
+let previewMarker    = null;   // Semi-transparent hover preview pin
+let _markerLib       = null;   // Cached AdvancedMarkerElement class
 let miniMapExpanded  = false;
 let _gameLoading     = false;  // Prevents concurrent startNewGame calls
 let _nmpzPanoId      = null;   // locked pano ID when No Move is active
@@ -482,15 +501,22 @@ function getRating(total) {
 }
 
 // ─── createPin helper (DRY) ───────────────────────────────
-function createPin(color, size = 22) {
+function createPin(color, size = 22, animate = false) {
   const el = document.createElement('div');
-  el.style.cssText = `width:${size}px;height:${size}px;background:${color};border:${Math.max(2, size / 7 | 0)}px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,.5)`;
+  const border = Math.max(2, size / 7 | 0);
+  el.style.cssText = `width:${size}px;height:${size}px;background:${color};border:${border}px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,.5);position:relative;`;
+  if (animate) {
+    el.classList.add('pin-place-anim');
+    const ripple = document.createElement('div');
+    ripple.className = 'pin-ripple';
+    el.appendChild(ripple);
+  }
   return el;
 }
 
 // ─── Weighted random zone selection ──────────────────────
-function pickZoneFromList(zones, weights) {
-  const r = Math.random();
+function pickZoneFromList(zones, weights, rand = Math.random) {
+  const r = rand();
   for (let i = 0; i < weights.length; i++) {
     if (r <= weights[i]) return zones[i];
   }
@@ -498,28 +524,35 @@ function pickZoneFromList(zones, weights) {
 }
 
 // ─── Find a valid Street View location ───────────────────
-async function getRandomValidLocation() {
+// rand: seeded RNG function (or Math.random for unseeded)
+async function getRandomValidLocation(rand = Math.random) {
   const difficulty = gameConfig.difficulty;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     let lat, lng, radius;
 
     if (difficulty === 'urban') {
-      const city = URBAN_CITIES[Math.floor(Math.random() * URBAN_CITIES.length)];
+      const city = URBAN_CITIES[Math.floor(rand() * URBAN_CITIES.length)];
       lat = city[0];
       lng = city[1];
       radius = 8000;
     } else if (difficulty === 'curated') {
-      const zone = pickZoneFromList(CURATED_ZONES, CURATED_WEIGHTS);
-      lat = zone[0] + Math.random() * (zone[1] - zone[0]);
-      lng = zone[2] + Math.random() * (zone[3] - zone[2]);
+      const zone = pickZoneFromList(CURATED_ZONES, CURATED_WEIGHTS, rand);
+      lat = zone[0] + rand() * (zone[1] - zone[0]);
+      lng = zone[2] + rand() * (zone[3] - zone[2]);
       radius = 100_000;
     } else {
       // world
-      const zone = pickZoneFromList(WORLD_ZONES, WORLD_WEIGHTS);
-      lat = zone[0] + Math.random() * (zone[1] - zone[0]);
-      lng = zone[2] + Math.random() * (zone[3] - zone[2]);
+      const zone = pickZoneFromList(WORLD_ZONES, WORLD_WEIGHTS, rand);
+      lat = zone[0] + rand() * (zone[1] - zone[0]);
+      lng = zone[2] + rand() * (zone[3] - zone[2]);
       radius = 100_000;
+    }
+
+    // Exponential backoff after repeated failures (avoids hammering API on network errors)
+    if (attempt >= 5) {
+      const base = Math.min(200 * Math.pow(2, attempt - 5), 3200);
+      await new Promise(r => setTimeout(r, base * (0.75 + 0.5 * rand())));
     }
 
     try {
@@ -543,8 +576,9 @@ async function prefetchLocations() {
   const progressEl = document.getElementById('loading-progress');
   let found = 0;
 
+  const rand = rng || Math.random;
   const promises = Array.from({ length: TOTAL_ROUNDS }, async () => {
-    const loc = await getRandomValidLocation();
+    const loc = await getRandomValidLocation(rand);
     found++;
     progressEl.textContent = `${found} / ${TOTAL_ROUNDS} found`;
     return loc;
@@ -576,6 +610,7 @@ function loadRound(index) {
   guessLatLng = null;
   document.getElementById('btn-guess').disabled = true;
   document.getElementById('guess-hint').textContent = 'Click on the map to place your pin';
+  updateStreakHUD();
 
   // Collapse mini-map
   setMiniMapExpanded(false);
@@ -626,21 +661,26 @@ function setMiniMapExpanded(expanded) {
   }
 }
 
+// ─── Get/cache marker library ────────────────────────────
+async function getMarkerLib() {
+  if (!_markerLib) {
+    _markerLib = (await googleMaps.importLibrary('marker')).AdvancedMarkerElement;
+  }
+  return _markerLib;
+}
+
 // ─── Place guess marker on mini-map ──────────────────────
 async function placeGuessMarker(latLng) {
-  // Remove old marker
-  if (guessMarker) {
-    guessMarker.map = null;
-    guessMarker = null;
-  }
+  // Remove old marker + preview
+  if (guessMarker) { guessMarker.map = null; guessMarker = null; }
+  if (previewMarker) { previewMarker.map = null; previewMarker = null; }
 
   try {
-    const { AdvancedMarkerElement } = await googleMaps.importLibrary('marker');
-
-    guessMarker = new AdvancedMarkerElement({
+    const AME = await getMarkerLib();
+    guessMarker = new AME({
       map: guessMap,
       position: latLng,
-      content: createPin('#f87171', 20),
+      content: createPin('#f87171', 20, true), // animated
       title: 'Your guess',
     });
 
@@ -652,13 +692,42 @@ async function placeGuessMarker(latLng) {
   }
 }
 
+// ─── Streak multiplier ───────────────────────────────────
+function getStreakMultiplier() {
+  if (streakCount >= 3) return 1.5;
+  if (streakCount >= 2) return 1.25;
+  if (streakCount >= 1) return 1.1;
+  return 1.0;
+}
+
+function updateStreakHUD() {
+  let el = document.getElementById('hud-streak');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'hud-streak';
+    el.className = 'hud-streak';
+    document.querySelector('.game-hud').appendChild(el);
+  }
+  if (streakCount > 0) {
+    const mult = getStreakMultiplier();
+    el.innerHTML = `<span class="hud-streak-fire">🔥</span><span class="hud-streak-val">${streakCount}</span><span class="hud-streak-mult">×${mult.toFixed(2).replace('.00','')}</span>`;
+    el.style.display = 'flex';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
 // ─── Calculate score ─────────────────────────────────────
+// Returns {base, multiplier, final} for display and streak tracking.
 function calculateScore(distanceMeters) {
-  return Math.round(MAX_SCORE * Math.exp(-distanceMeters / SCORE_K));
+  const base  = Math.round(MAX_SCORE * Math.exp(-distanceMeters / SCORE_K));
+  const mult  = getStreakMultiplier();
+  const final = Math.min(Math.round(base * mult), MAX_SCORE);
+  return { base, multiplier: mult, final };
 }
 
 // ─── Show round result ───────────────────────────────────
-async function showRoundResult(score, distanceMeters, guessPos) {
+async function showRoundResult(score, distanceMeters, guessPos, streakMult = 1) {
   // Re-enable Next Round button (may have been disabled by previous nextRound call)
   const nextBtn = document.getElementById('btn-next-round');
   if (nextBtn) nextBtn.disabled = false;
@@ -685,7 +754,21 @@ async function showRoundResult(score, distanceMeters, guessPos) {
   scoreEl.className = 'result-score-value ' + scoreClass(score);
   animateCounter(scoreEl, 0, score, 800);
 
+  // Show streak multiplier badge if active
+  const multBadge = document.getElementById('result-streak-mult');
+  if (multBadge) {
+    if (streakMult > 1) {
+      multBadge.textContent = `🔥 ×${streakMult.toFixed(2).replace('.00','')} streak bonus`;
+      multBadge.style.display = 'block';
+    } else {
+      multBadge.style.display = 'none';
+    }
+  }
+
   showScreen('screen-round-result');
+
+  // Confetti for high scores
+  if (score >= 4500) setTimeout(() => launchConfetti(scoreEl), 200);
 
   // Init result map (only once)
   if (!resultMap) {
@@ -870,6 +953,56 @@ async function showFinalResults() {
   }, 150);
 }
 
+// ─── Confetti burst ──────────────────────────────────────
+function launchConfetti(originEl) {
+  const canvas = document.createElement('canvas');
+  canvas.className = 'confetti-canvas';
+  document.body.appendChild(canvas);
+
+  const W = window.innerWidth, H = window.innerHeight;
+  canvas.width = W; canvas.height = H;
+
+  const rect = originEl.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top  + rect.height / 2;
+
+  const COLORS = ['#fbbf24','#4ade80','#60a5fa','#f87171','#a78bfa','#fb923c'];
+  const particles = Array.from({ length: 70 }, () => ({
+    x: cx, y: cy,
+    vx: (Math.random() - 0.5) * 14,
+    vy: Math.random() * -14 - 3,
+    color: COLORS[Math.floor(Math.random() * COLORS.length)],
+    w: Math.random() * 9 + 4,
+    h: Math.random() * 5 + 3,
+    rot: Math.random() * Math.PI * 2,
+    rotV: (Math.random() - 0.5) * 0.3,
+    life: 1,
+    decay: Math.random() * 0.012 + 0.009,
+  }));
+
+  const ctx = canvas.getContext('2d');
+  function frame() {
+    ctx.clearRect(0, 0, W, H);
+    let alive = false;
+    for (const p of particles) {
+      p.x += p.vx; p.y += p.vy; p.vy += 0.35;
+      p.vx *= 0.98; p.rot += p.rotV; p.life -= p.decay;
+      if (p.life <= 0) continue;
+      alive = true;
+      ctx.save();
+      ctx.globalAlpha = p.life;
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
+    }
+    if (alive) requestAnimationFrame(frame);
+    else canvas.remove();
+  }
+  requestAnimationFrame(frame);
+}
+
 // ─── Animate counter ─────────────────────────────────────
 function animateCounter(el, from, to, duration) {
   if (el._rafId) cancelAnimationFrame(el._rafId);
@@ -951,6 +1084,23 @@ async function initMaps() {
     placeGuessMarker(e.latLng).catch(err => console.error('Failed to place marker:', err));
   });
 
+  // Hover preview pin (shows semi-transparent pin at cursor)
+  guessMap.addListener('mousemove', async (e) => {
+    if (roundSubmitted) return;
+    try {
+      const AME = await getMarkerLib();
+      if (previewMarker) { previewMarker.map = null; previewMarker = null; }
+      previewMarker = new AME({
+        map: guessMap,
+        position: e.latLng,
+        content: createPin('rgba(248,113,113,0.45)', 16),
+      });
+    } catch { /* ignore */ }
+  });
+  guessMap.addListener('mouseout', () => {
+    if (previewMarker) { previewMarker.map = null; previewMarker = null; }
+  });
+
   // No Move enforcement — lock the pano when NMPZ mode is active.
   // setOptions alone isn't reliable; tracking pano_changed is the correct approach.
   // _nmpzAccepting guards against stale pano_changed events from the prior round.
@@ -967,15 +1117,44 @@ async function initMaps() {
   });
 }
 
+// ─── Seed URL helpers ─────────────────────────────────────
+function setSeedInUrl(seed) {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set('seed', seed.toString(36));
+    window.history.replaceState({}, '', url);
+  } catch { /* ignore */ }
+}
+
+function clearSeedFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('seed');
+    window.history.replaceState({}, '', url);
+  } catch { /* ignore */ }
+}
+
 // ─── Start a new game ────────────────────────────────────
 async function startNewGame() {
   if (_gameLoading) return;  // prevent concurrent calls from rapid Play Again clicks
   _gameLoading = true;
 
+  // Seed: use shared seed from URL if present, otherwise generate fresh one
+  const urlSeed = new URLSearchParams(window.location.search).get('seed');
+  if (urlSeed && gameSeed === 0) {
+    gameSeed = parseInt(urlSeed, 36) >>> 0;
+  }
+  if (!gameSeed) {
+    gameSeed = (crypto.getRandomValues(new Uint32Array(1))[0]) >>> 0 || 1;
+  }
+  rng = createRng(gameSeed);
+  setSeedInUrl(gameSeed);
+
   roundIndex         = 0;
   roundScores        = [];
   locations          = [];
   window._allGuesses = [];
+  streakCount        = 0;
 
   showScreen('screen-loading');
 
@@ -1011,14 +1190,18 @@ function submitGuess() {
     actualLatLng
   );
 
-  const score = calculateScore(distanceMeters);
+  const { base, multiplier, final: score } = calculateScore(distanceMeters);
+  // Update streak based on base score (before multiplier)
+  if (base >= STREAK_THRESHOLD) streakCount++;
+  else streakCount = 0;
+
   roundScores.push(score);
 
   const guessPos = { lat: guessLatLng.lat(), lng: guessLatLng.lng() };
   // Store guess for final map
   window._allGuesses.push(guessPos);
 
-  showRoundResult(score, distanceMeters, guessPos);
+  showRoundResult(score, distanceMeters, guessPos, multiplier);
 }
 
 // ─── Next round or final results ─────────────────────────
@@ -1038,6 +1221,8 @@ function nextRound() {
 
 // ─── Play again ───────────────────────────────────────────
 function playAgain() {
+  gameSeed = 0;  // generate fresh seed for new game
+  clearSeedFromUrl();
   stopTimer();
 
   // Clear guess marker
@@ -1070,6 +1255,8 @@ function hideExitModal() {
 function exitToHome() {
   hideExitModal();
   stopTimer();
+  gameSeed = 0;
+  clearSeedFromUrl();
   if (guessMarker) { guessMarker.map = null; guessMarker = null; }
   showScreen('screen-home');
 }
@@ -1114,6 +1301,19 @@ async function boot() {
   showScreen('screen-home');
   updateConfigUI();       // reflect loaded config in button groups
 
+  // Pre-load shared seed from URL (e.g. ?seed=abc123 from a friend's share card)
+  const sharedSeed = new URLSearchParams(window.location.search).get('seed');
+  if (sharedSeed) {
+    gameSeed = parseInt(sharedSeed, 36) >>> 0;
+    // Show subtle banner so player knows they're playing a shared game
+    const banner = document.createElement('p');
+    banner.id = 'shared-seed-banner';
+    banner.className = 'home-hint';
+    banner.style.color = '#4ade80';
+    banner.textContent = `🔗 Playing shared game (seed: ${sharedSeed})`;
+    document.querySelector('.home-content').appendChild(banner);
+  }
+
   // Try to get config: first from injected APP_CONFIG, fallback to /api/config
   let mapsKey = window.APP_CONFIG?.mapsKey;
   if (!mapsKey || mapsKey === 'YOUR_MAPS_KEY') {
@@ -1139,6 +1339,26 @@ async function boot() {
     currentUser = session?.user ?? null;
     updateAuthUI();
   }
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', e => {
+    const screen = document.querySelector('.screen.active')?.id;
+    if (e.key === 'Enter' && screen === 'screen-game') {
+      if (!document.getElementById('btn-guess').disabled) submitGuess();
+    } else if (e.key === ' ' && screen === 'screen-game') {
+      e.preventDefault();
+      setMiniMapExpanded(!miniMapExpanded);
+    } else if (e.key === 'ArrowRight' && screen === 'screen-round-result') {
+      const btn = document.getElementById('btn-next-round');
+      if (btn && !btn.disabled) nextRound();
+    } else if (e.key === 'Escape') {
+      if (document.getElementById('exit-modal').classList.contains('visible')) {
+        hideExitModal();
+      } else if (screen === 'screen-game') {
+        showExitModal();
+      }
+    }
+  });
 
   // Wire up buttons
   document.getElementById('btn-new-game').addEventListener('click', () => startNewGame());
