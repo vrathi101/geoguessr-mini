@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="A GeoGuessr-style game. Explore the world and guess locations using Street View." />
+  <title>GeoGuessr Mini</title>
+  <link rel="icon" href="data:," />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+</head>
+<body>
+
+  <noscript>This application requires JavaScript to run.</noscript>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       HOME SCREEN
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="screen-home" class="screen active">
+    <div class="home-bg"></div>
+    <div class="home-content">
+      <div class="home-logo">
+        <div class="logo-pin"></div>
+        <h1 class="home-title">GeoGuessr<span class="home-title-mini">Mini</span></h1>
+      </div>
+      <p class="home-subtitle">Explore the world. Guess the location. Score big.</p>
+      <div class="home-stats">
+        <div class="stat-item">
+          <span class="stat-num">5</span>
+          <span class="stat-label">Rounds</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat-item">
+          <span class="stat-num">5,000</span>
+          <span class="stat-label">Max per round</span>
+        </div>
+        <div class="stat-divider"></div>
+        <div class="stat-item">
+          <span class="stat-num">25,000</span>
+          <span class="stat-label">Perfect score</span>
+        </div>
+      </div>
+
+      <!-- Config Panel -->
+      <div class="config-panel">
+        <div class="config-row">
+          <span class="config-label">Timer</span>
+          <div class="config-btn-group" data-key="timer">
+            <button type="button" data-config="0" class="active">&#8734;</button>
+            <button type="button" data-config="30">30s</button>
+            <button type="button" data-config="60">1min</button>
+            <button type="button" data-config="120">2min</button>
+          </div>
+        </div>
+        <div class="config-row">
+          <span class="config-label">Region</span>
+          <div class="config-btn-group" data-key="difficulty">
+            <button type="button" data-config="world" class="active">World</button>
+            <button type="button" data-config="curated">Curated</button>
+            <button type="button" data-config="urban">Urban</button>
+          </div>
+        </div>
+        <div class="config-row">
+          <span class="config-label">Mode</span>
+          <div class="config-btn-group" data-key="noMove">
+            <button type="button" data-config="false" class="active">Move</button>
+            <button type="button" data-config="true">No Move</button>
+          </div>
+        </div>
+      </div>
+
+      <button id="btn-new-game" type="button" class="btn-primary btn-large">
+        <span class="btn-icon">&#9654;</span>
+        New Game
+      </button>
+      <button id="btn-leaderboard" type="button" class="btn-secondary btn-large">
+        &#127942; Leaderboard
+      </button>
+      <p class="home-hint">Click anywhere on the Street View to look around. Use the mini-map to place your guess.</p>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       LOADING SCREEN
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="screen-loading" class="screen">
+    <div class="loading-content">
+      <div class="loading-spinner"></div>
+      <p class="loading-text">Finding locations around the world&hellip;</p>
+      <p class="loading-sub" id="loading-progress">0 / 5 found</p>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       GAME SCREEN
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="screen-game" class="screen">
+
+    <!-- Top HUD -->
+    <div class="game-hud">
+      <div id="hud-timer" style="display:none">
+        <span class="hud-label">Time</span>
+        <span class="hud-value" id="hud-timer-value">1:00</span>
+      </div>
+      <div class="hud-rounds">
+        <span class="hud-label">Round</span>
+        <span class="hud-value"><span id="hud-round-current">1</span><span class="hud-slash">/</span>5</span>
+      </div>
+      <div class="hud-score">
+        <span class="hud-label">Score</span>
+        <span class="hud-value" id="hud-total-score">0</span>
+      </div>
+    </div>
+
+    <!-- Street View Panorama -->
+    <div id="street-view-pano"></div>
+
+    <!-- Mini Map Overlay -->
+    <div id="mini-map-container" class="mini-map-collapsed">
+      <div id="mini-map-header">
+        <span id="mini-map-toggle-label">Click to guess</span>
+        <button id="mini-map-toggle" type="button" aria-label="Toggle map">
+          <span id="mini-map-toggle-icon">&#9650;</span>
+        </button>
+      </div>
+      <div id="mini-map"></div>
+      <div id="mini-map-footer">
+        <span id="guess-hint">Click on the map to place your pin</span>
+        <button id="btn-guess" type="button" class="btn-primary" disabled>
+          GUESS
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       ROUND RESULT SCREEN
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="screen-round-result" class="screen">
+
+    <div class="result-layout">
+
+      <!-- Result Map -->
+      <div id="result-map-container">
+        <div id="result-map"></div>
+      </div>
+
+      <!-- Result Panel -->
+      <div class="result-panel">
+        <div class="result-panel-inner">
+
+          <div class="result-round-badge">
+            Round <span id="result-round-num">1</span> of 5
+          </div>
+
+          <div class="result-score-display">
+            <div class="result-score-label">Score</div>
+            <div class="result-score-value" id="result-round-score">0</div>
+            <div class="result-score-max">/ 5,000</div>
+          </div>
+
+          <div class="result-distance-display">
+            <div class="result-distance-icon">&#128205;</div>
+            <div class="result-distance-text">
+              <span class="result-distance-label">You were</span>
+              <span class="result-distance-value" id="result-distance">0 km</span>
+              <span class="result-distance-label">away</span>
+            </div>
+          </div>
+
+          <div class="result-location-info">
+            <div class="result-location-row">
+              <span class="result-location-dot actual-dot"></span>
+              <span class="result-location-label">Actual location</span>
+              <span class="result-location-coords" id="result-actual-coords">&mdash;</span>
+            </div>
+            <div class="result-location-row">
+              <span class="result-location-dot guess-dot"></span>
+              <span class="result-location-label">Your guess</span>
+              <span class="result-location-coords" id="result-guess-coords">&mdash;</span>
+            </div>
+          </div>
+
+          <div class="result-cumulative">
+            Total: <strong id="result-total-score">0</strong> / <span id="result-total-max">5,000</span>
+          </div>
+
+          <button id="btn-next-round" type="button" class="btn-primary btn-large btn-full">
+            Next Round &rarr;
+          </button>
+
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       FINAL RESULTS SCREEN
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="screen-final" class="screen">
+
+    <div class="final-layout">
+
+      <!-- Final Map -->
+      <div id="final-map-container">
+        <div id="final-map"></div>
+      </div>
+
+      <!-- Final Panel -->
+      <div class="final-panel">
+        <div class="final-panel-inner">
+
+          <h2 class="final-title">Game Over!</h2>
+
+          <div class="final-score-display">
+            <div class="final-score-value" id="final-total-score">0</div>
+            <div class="final-score-max">/ 25,000</div>
+          </div>
+
+          <div class="final-rating" id="final-rating">Explorer</div>
+
+          <!-- Per-round breakdown -->
+          <div class="final-rounds-breakdown" id="final-rounds-breakdown">
+            <!-- Populated by JS -->
+          </div>
+
+          <!-- Share button -->
+          <button id="btn-share" type="button" class="btn-secondary btn-large btn-full">
+            &#128279; Share Result
+          </button>
+
+          <!-- Save to leaderboard section -->
+          <div id="final-save-section">
+            <!-- Signed in state -->
+            <div id="final-save-signed-in" style="display:none">
+              <button id="btn-save-score" type="button" class="btn-primary btn-full">
+                &#128190; Save to Leaderboard
+              </button>
+              <span id="save-score-status"></span>
+            </div>
+            <!-- Signed out state -->
+            <div id="final-save-signed-out" style="display:none">
+              <button id="btn-final-sign-in" type="button" class="btn-secondary btn-full">
+                Sign in to Save Score
+              </button>
+            </div>
+          </div>
+
+          <button id="btn-final-leaderboard" type="button" class="btn-secondary btn-large btn-full">
+            &#127942; View Leaderboard
+          </button>
+
+          <button id="btn-play-again" type="button" class="btn-primary btn-large btn-full">
+            Play Again
+          </button>
+
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       LEADERBOARD SCREEN
+  ═══════════════════════════════════════════════════════════ -->
+  <div id="screen-leaderboard" class="screen">
+    <div class="lb-layout">
+      <div class="lb-header">
+        <button id="btn-lb-back" type="button" class="btn-secondary">
+          &larr; Back
+        </button>
+        <span class="lb-title">&#127942; Leaderboard</span>
+        <div class="lb-auth" id="lb-auth">
+          <!-- Populated by updateAuthUI() -->
+        </div>
+      </div>
+      <div class="lb-content" id="lb-content">
+        <p class="lb-status" id="lb-status">Loading&hellip;</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- APP_CONFIG injected by server.js; fallback to /api/config if mapsKey is placeholder -->
+  <script>
+window.APP_CONFIG = {"mapsKey":"YOUR_MAPS_KEY","supabaseUrl":"","supabaseAnonKey":""};
+</script>
+  <script src="app.js" defer></script>
+
+</body>
+</html>
