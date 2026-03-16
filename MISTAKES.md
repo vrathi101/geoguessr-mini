@@ -107,5 +107,33 @@ Running log of bugs caught across audit/debug cycles. Add every new bug here to 
 
 ---
 
+## BUG-15 · `autoSubmitRound` Passing Semantically Wrong `distanceMeters`
+**Symptom:** `showRoundResult(0, 1, null)` — the `1` for distanceMeters is meaningless since `guessPos=null` means the distance branch is never reached. But it's misleading and would break if logic changed.
+**Fix:** Changed to `showRoundResult(0, 0, null)` — 0 is the correct semantic value for "no guess made."
+**Lesson:** Don't pass placeholder magic numbers to functions. Use the semantically correct value even if the current code path doesn't use it.
+
+---
+
+## BUG-16 · Confetti Memory Leak on Rapid 4500+ Scores
+**Symptom:** `launchConfetti()` creates a canvas and 70 particles per call with no deduplication. Multiple simultaneous animations accumulate if player scores 4500+ on multiple rounds quickly.
+**Fix:** Added `_confettiRunning` flag — skips new animation if one is already running. Clears flag when animation finishes.
+**Lesson:** Canvas animations that create DOM elements must have deduplication or concurrency limits.
+
+---
+
+## BUG-17 · Hover Preview Pin Async Race Condition
+**Symptom:** `mousemove` handler is `async`. Between `await getMarkerLib()` completing and `previewMarker = new AME(...)` running, a newer `mousemove` event may have already cleared and re-created `previewMarker`, leaving a stale marker in the DOM.
+**Fix:** Added `_hoverGen` generation counter. Each mousemove increments the counter; the async continuation checks if it's still the latest generation before acting. `mouseout` also increments to invalidate in-flight creations.
+**Lesson:** Async event handlers need stale-result detection. Use a generation/sequence counter to discard superseded async continuations.
+
+---
+
+## BUG-18 · Seed=0 Falsy Check Breaks Shared Seed
+**Symptom:** `if (!gameSeed)` treats `0` as falsy. `parseInt('0', 36) >>> 0 = 0`, so a URL with `?seed=0` generates a new random seed instead of using the shared one. Also, `parseInt('invalid', 36)` returns `NaN`; `NaN >>> 0 = 0`, which would use seed 0 as "no seed."
+**Fix:** Changed to `if (gameSeed === 0)` strict equality. Added `Number.isNaN(parsed)` check before `>>> 0` to reject invalid seeds gracefully.
+**Lesson:** Never use falsy checks on numeric values that include 0 as a valid state. Always use `=== 0` or explicit `isNaN` guards.
+
+---
+
 ## PATTERN · Seeded RNG
 **Note (2026-03-15):** `rng` module-level variable holds the current game's seeded LCG. `null` = use `Math.random`. Always pass `rng || Math.random` to `getRandomValidLocation()` and `pickZoneFromList()`. Reset `gameSeed = 0; rng = null` between games.

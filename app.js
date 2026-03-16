@@ -390,7 +390,7 @@ function autoSubmitRound() {
   streakCount = 0;  // timeout breaks streak
   roundScores.push(0);
   window._allGuesses.push(null);
-  showRoundResult(0, 1, null);
+  showRoundResult(0, 0, null);
 }
 
 // ─── Share Card ───────────────────────────────────────────
@@ -450,6 +450,7 @@ let guessLatLng      = null;   // google.maps.LatLng of current guess
 let guessMarker      = null;   // AdvancedMarkerElement on guess map
 let previewMarker    = null;   // Semi-transparent hover preview pin
 let _markerLib       = null;   // Cached AdvancedMarkerElement class
+let _hoverGen        = 0;      // Generation counter to discard stale async preview-pin results
 let miniMapExpanded  = false;
 let _gameLoading     = false;  // Prevents concurrent startNewGame calls
 let _nmpzPanoId      = null;   // locked pano ID when No Move is active
@@ -671,9 +672,13 @@ async function getMarkerLib() {
 
 // ─── Place guess marker on mini-map ──────────────────────
 async function placeGuessMarker(latLng) {
-  // Remove old marker + preview
+  if (roundSubmitted) return;
+
+  // Remove old marker + preview; bump hover gen to suppress the mousemove
+  // that fires immediately after a click (which would recreate the preview).
   if (guessMarker) { guessMarker.map = null; guessMarker = null; }
   if (previewMarker) { previewMarker.map = null; previewMarker = null; }
+  _hoverGen++; // discard any in-flight or next hover creation
 
   try {
     const AME = await getMarkerLib();
@@ -693,6 +698,10 @@ async function placeGuessMarker(latLng) {
 }
 
 // ─── Streak multiplier ───────────────────────────────────
+function formatMultiplier(n) {
+  return `×${n.toFixed(2).replace('.00', '')}`;
+}
+
 function getStreakMultiplier() {
   if (streakCount >= 3) return 1.5;
   if (streakCount >= 2) return 1.25;
@@ -710,7 +719,7 @@ function updateStreakHUD() {
   }
   if (streakCount > 0) {
     const mult = getStreakMultiplier();
-    el.innerHTML = `<span class="hud-streak-fire">🔥</span><span class="hud-streak-val">${streakCount}</span><span class="hud-streak-mult">×${mult.toFixed(2).replace('.00','')}</span>`;
+    el.innerHTML = `<span class="hud-streak-fire">🔥</span><span class="hud-streak-val">${streakCount}</span><span class="hud-streak-mult">${formatMultiplier(mult)}</span>`;
     el.style.display = 'flex';
   } else {
     el.style.display = 'none';
@@ -758,7 +767,7 @@ async function showRoundResult(score, distanceMeters, guessPos, streakMult = 1) 
   const multBadge = document.getElementById('result-streak-mult');
   if (multBadge) {
     if (streakMult > 1) {
-      multBadge.textContent = `🔥 ×${streakMult.toFixed(2).replace('.00','')} streak bonus`;
+      multBadge.textContent = `🔥 ${formatMultiplier(streakMult)} streak bonus`;
       multBadge.style.display = 'block';
     } else {
       multBadge.style.display = 'none';
@@ -954,7 +963,10 @@ async function showFinalResults() {
 }
 
 // ─── Confetti burst ──────────────────────────────────────
+let _confettiRunning = false;  // prevent overlapping animations
 function launchConfetti(originEl) {
+  if (_confettiRunning) return;
+  _confettiRunning = true;
   const canvas = document.createElement('canvas');
   canvas.className = 'confetti-canvas';
   document.body.appendChild(canvas);
@@ -998,7 +1010,7 @@ function launchConfetti(originEl) {
       ctx.restore();
     }
     if (alive) requestAnimationFrame(frame);
-    else canvas.remove();
+    else { canvas.remove(); _confettiRunning = false; }
   }
   requestAnimationFrame(frame);
 }
@@ -1085,10 +1097,13 @@ async function initMaps() {
   });
 
   // Hover preview pin (shows semi-transparent pin at cursor)
+  // _hoverGen is module-level so placeGuessMarker can also bump it to suppress post-click flicker.
   guessMap.addListener('mousemove', async (e) => {
     if (roundSubmitted) return;
+    const myGen = ++_hoverGen;
     try {
       const AME = await getMarkerLib();
+      if (myGen !== _hoverGen) return; // superseded by a newer event
       if (previewMarker) { previewMarker.map = null; previewMarker = null; }
       previewMarker = new AME({
         map: guessMap,
@@ -1098,6 +1113,7 @@ async function initMaps() {
     } catch { /* ignore */ }
   });
   guessMap.addListener('mouseout', () => {
+    _hoverGen++; // invalidate any in-flight creation
     if (previewMarker) { previewMarker.map = null; previewMarker = null; }
   });
 
@@ -1142,9 +1158,12 @@ async function startNewGame() {
   // Seed: use shared seed from URL if present, otherwise generate fresh one
   const urlSeed = new URLSearchParams(window.location.search).get('seed');
   if (urlSeed && gameSeed === 0) {
-    gameSeed = parseInt(urlSeed, 36) >>> 0;
+    const parsed = parseInt(urlSeed, 36);
+    // Only use parsed seed if valid (not NaN); createRng handles 0 → 1 internally
+    if (!Number.isNaN(parsed)) gameSeed = parsed >>> 0;
   }
-  if (!gameSeed) {
+  if (gameSeed === 0) {
+    // No valid seed yet — generate a fresh non-zero one
     gameSeed = (crypto.getRandomValues(new Uint32Array(1))[0]) >>> 0 || 1;
   }
   rng = createRng(gameSeed);

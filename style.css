@@ -19,6 +19,7 @@
   --accent-dark:   #16a34a;
   --accent-glow:   rgba(74, 222, 128, 0.25);
   --gold:          #fbbf24;
+  --gold-rgb:      251, 191, 36;
   --red:           #f87171;
   --blue:          #60a5fa;
   --radius:        12px;
@@ -1200,6 +1201,13 @@ html, body {
     padding: 0 10px;
   }
 
+  .hud-streak {
+    padding: 3px 8px;
+    font-size: 0.7rem;
+  }
+  .hud-streak-fire, .hud-streak-val { font-size: 0.85rem; }
+  .hud-streak-mult { font-size: 0.6rem; }
+
   .lb-header {
     flex-wrap: wrap;
     gap: 12px;
@@ -1248,13 +1256,13 @@ html, body {
   display: flex;
   align-items: center;
   gap: 4px;
-  background: rgba(251, 191, 36, 0.15);
-  border: 1px solid rgba(251, 191, 36, 0.4);
+  background: rgba(var(--gold-rgb, 251, 191, 36), 0.15);
+  border: 1px solid rgba(var(--gold-rgb, 251, 191, 36), 0.4);
   border-radius: 8px;
   padding: 4px 10px;
   font-size: 0.8rem;
   font-weight: 700;
-  color: #fbbf24;
+  color: var(--gold);
   animation: streakAppear 0.3s ease-out;
 }
 
@@ -1276,7 +1284,7 @@ html, body {
   top: 0; left: 0;
   width: 100%; height: 100%;
   pointer-events: none;
-  z-index: 9999;
+  z-index: 101; /* above exit-modal (z-index:100) but not higher than necessary */
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1286,14 +1294,14 @@ html, body {
 #result-streak-mult {
   display: none;
   font-size: 0.8rem;
-  color: #fbbf24;
+  color: var(--gold);
   font-weight: 600;
   text-align: center;
   margin-top: 4px;
   padding: 4px 10px;
-  background: rgba(251, 191, 36, 0.1);
+  background: rgba(var(--gold-rgb, 251, 191, 36), 0.1);
   border-radius: 6px;
-  border: 1px solid rgba(251, 191, 36, 0.3);
+  border: 1px solid rgba(var(--gold-rgb, 251, 191, 36), 0.3);
 }
 
 /* ═══════════════════════════════════════════════════════════
