@@ -78,6 +78,14 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Security: block sensitive files from being served
+  const basename = path.basename(filePath);
+  if (basename === ".env" || basename.startsWith(".env.")) {
+    res.writeHead(403);
+    res.end("Forbidden");
+    return;
+  }
+
   fs.readFile(filePath, (err, data) => {
     if (err) {
       res.writeHead(404, { "Content-Type": "text/plain" });

@@ -73,10 +73,6 @@ function buildWeights(zones) {
 const WORLD_WEIGHTS   = buildWeights(WORLD_ZONES);
 const CURATED_WEIGHTS = buildWeights(CURATED_ZONES);
 
-// Legacy alias — kept so any possible references work
-const COVERAGE_ZONES = WORLD_ZONES;
-const ZONE_WEIGHTS   = WORLD_WEIGHTS;
-
 // ─── Game Config State ───────────────────────────────────
 let gameConfig = { timer: 0, difficulty: 'world', noMove: false };
 
@@ -85,7 +81,12 @@ function loadConfig() {
     const saved = localStorage.getItem('geo_config');
     if (saved) {
       const parsed = JSON.parse(saved);
-      gameConfig = Object.assign({ timer: 0, difficulty: 'world', noMove: false }, parsed);
+      const defaults = { timer: 0, difficulty: 'world', noMove: false };
+      gameConfig = {
+        timer:      typeof parsed.timer === 'number'  ? parsed.timer      : defaults.timer,
+        difficulty: typeof parsed.difficulty === 'string' ? parsed.difficulty : defaults.difficulty,
+        noMove:     typeof parsed.noMove === 'boolean' ? parsed.noMove     : defaults.noMove,
+      };
     }
   } catch {
     // ignore parse errors
@@ -108,6 +109,16 @@ function updateConfigUI() {
       btn.classList.toggle('active', btn.dataset.config === currentVal);
     });
   });
+}
+
+// ─── Utility: HTML escape ────────────────────────────────
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ─── Supabase State ──────────────────────────────────────
@@ -152,8 +163,8 @@ function updateAuthUI() {
     const name = currentUser.user_metadata?.full_name || currentUser.email || 'User';
     lbAuth.innerHTML = `
       <div class="lb-user">
-        ${avatarUrl ? `<img class="lb-user-avatar" src="${avatarUrl}" alt="${name}" />` : ''}
-        <span class="lb-user-name">${name}</span>
+        ${avatarUrl ? `<img class="lb-user-avatar" src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(name)}" />` : ''}
+        <span class="lb-user-name">${escapeHtml(name)}</span>
       </div>
       <button id="btn-sign-out" type="button" class="btn-secondary" style="padding:8px 16px;font-size:0.8rem;">Sign Out</button>
     `;
@@ -224,7 +235,12 @@ async function handleSaveScore() {
   if (statusEl) statusEl.textContent = 'Saving…';
 
   const ok = await saveScore();
-  if (statusEl) statusEl.textContent = ok ? 'Saved!' : 'Failed to save.';
+  if (ok) {
+    if (statusEl) statusEl.textContent = 'Saved!';
+  } else {
+    if (statusEl) statusEl.textContent = 'Failed to save. Try again.';
+    if (btn) btn.disabled = false; // allow retry
+  }
 }
 
 // ─── Leaderboard ─────────────────────────────────────────
@@ -261,11 +277,13 @@ async function loadLeaderboard() {
 
     const rows = data.map((row, i) => {
       const rank = i + 1;
-      const avatarHtml = row.avatar_url
-        ? `<img class="lb-player-avatar" src="${row.avatar_url}" alt="${row.display_name || ''}" />`
+      const safeName   = escapeHtml(row.display_name || 'Anonymous');
+      const safeAvatar = escapeHtml(row.avatar_url || '');
+      const avatarHtml = safeAvatar
+        ? `<img class="lb-player-avatar" src="${safeAvatar}" alt="${safeName}" />`
         : `<div class="lb-player-avatar" style="background:var(--bg-card2);border:1px solid var(--border);"></div>`;
-      const diffLabel = { world: 'World', curated: 'Curated', urban: 'Urban' }[row.difficulty] || row.difficulty || 'World';
-      const timerLabel = row.timer_seconds > 0 ? `${row.timer_seconds}s` : '∞';
+      const diffLabel = { world: 'World', curated: 'Curated', urban: 'Urban' }[row.difficulty] || escapeHtml(row.difficulty || 'World');
+      const timerLabel = row.timer_seconds > 0 ? `${Number(row.timer_seconds)}s` : '∞';
       const modeLabel = row.nmpz ? 'No Move' : 'Move';
       const modeStr = `${diffLabel} | ${timerLabel} | ${modeLabel}`;
       const dateStr = row.played_at ? new Date(row.played_at).toLocaleDateString() : '—';
@@ -275,7 +293,7 @@ async function loadLeaderboard() {
           <td>
             <div class="lb-player">
               ${avatarHtml}
-              <span>${row.display_name || 'Anonymous'}</span>
+              <span>${safeName}</span>
             </div>
           </td>
           <td class="lb-score">${(row.total_score || 0).toLocaleString()}</td>
@@ -348,12 +366,15 @@ function startTimer(seconds) {
 }
 
 function formatTime(seconds) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
+  const clamped = Math.max(0, seconds);
+  const m = Math.floor(clamped / 60);
+  const s = clamped % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
 function autoSubmitRound() {
+  if (roundSubmitted) return;
+  roundSubmitted = true;
   stopTimer();
   roundScores.push(0);
   window._allGuesses.push(null);
@@ -362,8 +383,8 @@ function autoSubmitRound() {
 
 // ─── Share Card ───────────────────────────────────────────
 function scoreEmoji(score) {
-  if (score >= 4000) return '🟩';
-  if (score >= 2000) return '🟨';
+  if (score >= 4500) return '🟩';
+  if (score >= 2500) return '🟨';
   if (score >= 1000) return '🟧';
   return '🟥';
 }
@@ -404,13 +425,16 @@ let guessMap        = null;   // Map instance for guessing
 let resultMap       = null;   // Map instance for round result
 let finalMap        = null;   // Map instance for final results
 
-let locations       = [];     // Array of {lat, lng} for all rounds
-let roundIndex      = 0;      // Current round (0-based)
-let roundScores     = [];     // Scores per round
-let guessLatLng     = null;   // google.maps.LatLng of current guess
-let guessMarker     = null;   // AdvancedMarkerElement on guess map
-let miniMapExpanded = false;
-let _nmpzPanoId     = null;   // locked pano ID when No Move is active
+let locations        = [];     // Array of {lat, lng} for all rounds
+let roundIndex       = 0;      // Current round (0-based)
+let roundScores      = [];     // Scores per round
+let roundSubmitted   = false;  // Guard against double-submission per round
+let guessLatLng      = null;   // google.maps.LatLng of current guess
+let guessMarker      = null;   // AdvancedMarkerElement on guess map
+let miniMapExpanded  = false;
+let _gameLoading     = false;  // Prevents concurrent startNewGame calls
+let _nmpzPanoId      = null;   // locked pano ID when No Move is active
+let _nmpzAccepting   = false;  // Ignores stale pano_changed from previous round
 
 // Initialize global guess store
 window._allGuesses  = [];
@@ -548,6 +572,7 @@ function loadRound(index) {
   }
 
   // Reset guess state
+  roundSubmitted = false;
   guessLatLng = null;
   document.getElementById('btn-guess').disabled = true;
   document.getElementById('guess-hint').textContent = 'Click on the map to place your pin';
@@ -555,8 +580,11 @@ function loadRound(index) {
   // Collapse mini-map
   setMiniMapExpanded(false);
 
-  // Reset NMPZ lock so pano_changed treats the incoming scene as the new origin.
-  _nmpzPanoId = null;
+  // Reset NMPZ lock. Disable accepting until after any queued stale pano_changed
+  // events (from the prior round) have drained, then re-enable.
+  _nmpzPanoId     = null;
+  _nmpzAccepting  = false;
+  setTimeout(() => { _nmpzAccepting = true; }, 0);
 
   // Set Street View position
   panorama.setPosition({ lat: loc.lat, lng: loc.lng });
@@ -631,6 +659,10 @@ function calculateScore(distanceMeters) {
 
 // ─── Show round result ───────────────────────────────────
 async function showRoundResult(score, distanceMeters, guessPos) {
+  // Re-enable Next Round button (may have been disabled by previous nextRound call)
+  const nextBtn = document.getElementById('btn-next-round');
+  if (nextBtn) nextBtn.disabled = false;
+
   const actual = locations[roundIndex];
   const total  = roundScores.reduce((a, b) => a + b, 0);
 
@@ -921,8 +953,9 @@ async function initMaps() {
 
   // No Move enforcement — lock the pano when NMPZ mode is active.
   // setOptions alone isn't reliable; tracking pano_changed is the correct approach.
+  // _nmpzAccepting guards against stale pano_changed events from the prior round.
   panorama.addListener('pano_changed', () => {
-    if (!gameConfig.noMove) return;
+    if (!gameConfig.noMove || !_nmpzAccepting) return;
     const pano = panorama.getPano();
     if (!_nmpzPanoId) {
       // First fire after loadRound → this is the starting panorama, lock it.
@@ -936,6 +969,9 @@ async function initMaps() {
 
 // ─── Start a new game ────────────────────────────────────
 async function startNewGame() {
+  if (_gameLoading) return;  // prevent concurrent calls from rapid Play Again clicks
+  _gameLoading = true;
+
   roundIndex         = 0;
   roundScores        = [];
   locations          = [];
@@ -946,22 +982,25 @@ async function startNewGame() {
   try {
     await prefetchLocations();
   } catch (err) {
+    _gameLoading = false;
     alert('Failed to load locations. Please check your API key and try again.\n\n' + err.message);
     showScreen('screen-home');
     return;
   }
 
+  _gameLoading = false;
   loadRound(0);
 }
 
 // ─── Submit guess ─────────────────────────────────────────
 function submitGuess() {
-  if (!guessLatLng) return;
+  if (!guessLatLng || roundSubmitted) return;
+  roundSubmitted = true;
 
   // Stop timer
   stopTimer();
 
-  // Prevent double-submission
+  // Prevent double-submission via UI
   document.getElementById('btn-guess').disabled = true;
 
   const actual = locations[roundIndex];
@@ -984,6 +1023,10 @@ function submitGuess() {
 
 // ─── Next round or final results ─────────────────────────
 function nextRound() {
+  // Disable immediately to prevent double-click from skipping rounds
+  const btn = document.getElementById('btn-next-round');
+  if (btn) btn.disabled = true;
+
   stopTimer();
   roundIndex++;
   if (roundIndex >= TOTAL_ROUNDS) {
