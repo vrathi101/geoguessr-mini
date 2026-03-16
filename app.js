@@ -111,29 +111,29 @@ function updateConfigUI() {
 }
 
 // ─── Supabase State ──────────────────────────────────────
-let supabase     = null;
+let sb           = null;  // Supabase client (avoid conflict with CDN's window.supabase)
 let currentUser  = null;
 
 function initSupabase(url, anonKey) {
   if (!url || !anonKey || !window.supabase) return;
-  supabase = window.supabase.createClient(url, anonKey);
-  supabase.auth.onAuthStateChange((event, session) => {
+  sb = window.supabase.createClient(url, anonKey);
+  sb.auth.onAuthStateChange((event, session) => {
     currentUser = session?.user ?? null;
     updateAuthUI();
   });
 }
 
 async function signInWithGoogle() {
-  if (!supabase) return;
-  await supabase.auth.signInWithOAuth({
+  if (!sb) return;
+  await sb.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo: window.location.origin },
   });
 }
 
 async function signOut() {
-  if (!supabase) return;
-  await supabase.auth.signOut();
+  if (!sb) return;
+  await sb.auth.signOut();
   currentUser = null;
   updateAuthUI();
 }
@@ -142,7 +142,7 @@ function updateAuthUI() {
   const lbAuth = document.getElementById('lb-auth');
   if (!lbAuth) return;
 
-  if (!supabase) {
+  if (!sb) {
     lbAuth.innerHTML = '';
     return;
   }
@@ -173,7 +173,7 @@ function updateFinalAuthUI() {
   const signedOut = document.getElementById('final-save-signed-out');
   if (!signedIn || !signedOut) return;
 
-  if (!supabase) {
+  if (!sb) {
     signedIn.style.display  = 'none';
     signedOut.style.display = 'none';
     return;
@@ -196,14 +196,14 @@ function updateFinalAuthUI() {
 }
 
 async function saveScore() {
-  if (!supabase || !currentUser) return false;
+  if (!sb || !currentUser) return false;
   const total = roundScores.reduce((a, b) => a + b, 0);
   const roundData = roundScores.map((s, i) => ({
     score: s,
     guess: window._allGuesses[i],
     actual: locations[i],
   }));
-  const { error } = await supabase.from('scores').insert({
+  const { error } = await sb.from('scores').insert({
     user_id: currentUser.id,
     display_name: currentUser.user_metadata?.full_name || currentUser.email,
     avatar_url: currentUser.user_metadata?.avatar_url || null,
@@ -238,7 +238,7 @@ async function loadLeaderboard() {
   const contentEl = document.getElementById('lb-content');
   const statusEl  = document.getElementById('lb-status');
 
-  if (!supabase) {
+  if (!sb) {
     contentEl.innerHTML = '<p class="lb-status">Leaderboard requires Supabase configuration.</p>';
     return;
   }
@@ -246,7 +246,7 @@ async function loadLeaderboard() {
   contentEl.innerHTML = '<p class="lb-status" id="lb-status">Loading&hellip;</p>';
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await sb
       .from('scores')
       .select('*')
       .order('total_score', { ascending: false })
@@ -1057,8 +1057,8 @@ async function boot() {
   }
 
   // Check existing Supabase session
-  if (supabase) {
-    const { data: { session } } = await supabase.auth.getSession();
+  if (sb) {
+    const { data: { session } } = await sb.auth.getSession();
     currentUser = session?.user ?? null;
     updateAuthUI();
   }
