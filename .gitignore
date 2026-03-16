@@ -1,0 +1,15 @@
+# Environment variables — never commit API keys
+.env
+
+# Editor/tool metadata
+.blackboxcli/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node
+node_modules/
+npm-debug.log*
+package-lock.json
