@@ -115,6 +115,9 @@
       </div>
     </div>
 
+    <!-- Exit button -->
+    <button id="btn-exit-game" type="button" aria-label="Exit game">&#8592;</button>
+
     <!-- Street View Panorama -->
     <div id="street-view-pano"></div>
 
@@ -283,6 +286,18 @@
       </div>
       <div class="lb-content" id="lb-content">
         <p class="lb-status" id="lb-status">Loading&hellip;</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Exit confirmation modal -->
+  <div id="exit-modal" aria-modal="true" role="dialog" aria-labelledby="exit-modal-title">
+    <div class="exit-modal-card">
+      <p id="exit-modal-title" class="exit-modal-title">Exit game?</p>
+      <p class="exit-modal-sub">Your progress will be lost.</p>
+      <div class="exit-modal-actions">
+        <button id="btn-exit-cancel" type="button" class="btn-primary">Keep Playing</button>
+        <button id="btn-exit-confirm" type="button" class="btn-secondary">Exit</button>
       </div>
     </div>
   </div>

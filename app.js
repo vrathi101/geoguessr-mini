@@ -1015,6 +1015,22 @@ function playAgain() {
   startNewGame();
 }
 
+// ─── Exit modal ───────────────────────────────────────────
+function showExitModal() {
+  document.getElementById('exit-modal').classList.add('visible');
+}
+
+function hideExitModal() {
+  document.getElementById('exit-modal').classList.remove('visible');
+}
+
+function exitToHome() {
+  hideExitModal();
+  stopTimer();
+  if (guessMarker) { guessMarker.map = null; guessMarker = null; }
+  showScreen('screen-home');
+}
+
 // ─── Show API key error ───────────────────────────────────
 function showApiKeyError() {
   const homeContent = document.querySelector('.home-content');
@@ -1083,6 +1099,12 @@ async function boot() {
 
   // Wire up buttons
   document.getElementById('btn-new-game').addEventListener('click', () => startNewGame());
+  document.getElementById('btn-exit-game').addEventListener('click', () => showExitModal());
+  document.getElementById('btn-exit-cancel').addEventListener('click', () => hideExitModal());
+  document.getElementById('btn-exit-confirm').addEventListener('click', () => exitToHome());
+  document.getElementById('exit-modal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) hideExitModal(); // click backdrop to dismiss
+  });
   document.getElementById('btn-guess').addEventListener('click', () => submitGuess());
   document.getElementById('btn-next-round').addEventListener('click', () => nextRound());
   document.getElementById('btn-play-again').addEventListener('click', () => playAgain());
