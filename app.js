@@ -410,6 +410,7 @@ let roundScores     = [];     // Scores per round
 let guessLatLng     = null;   // google.maps.LatLng of current guess
 let guessMarker     = null;   // AdvancedMarkerElement on guess map
 let miniMapExpanded = false;
+let _nmpzPanoId     = null;   // locked pano ID when No Move is active
 
 // Initialize global guess store
 window._allGuesses  = [];
@@ -554,11 +555,14 @@ function loadRound(index) {
   // Collapse mini-map
   setMiniMapExpanded(false);
 
+  // Reset NMPZ lock so pano_changed treats the incoming scene as the new origin.
+  _nmpzPanoId = null;
+
   // Set Street View position
   panorama.setPosition({ lat: loc.lat, lng: loc.lng });
   panorama.setPov({ heading: Math.random() * 360, pitch: 0 });
 
-  // Apply NMPZ settings
+  // Hide navigation arrows in No Move mode (UX hint — actual lock is via pano_changed).
   panorama.setOptions({
     linksControl: !gameConfig.noMove,
     clickToGo:    !gameConfig.noMove,
@@ -913,6 +917,20 @@ async function initMaps() {
   // Click on mini-map to place guess
   guessMap.addListener('click', (e) => {
     placeGuessMarker(e.latLng).catch(err => console.error('Failed to place marker:', err));
+  });
+
+  // No Move enforcement — lock the pano when NMPZ mode is active.
+  // setOptions alone isn't reliable; tracking pano_changed is the correct approach.
+  panorama.addListener('pano_changed', () => {
+    if (!gameConfig.noMove) return;
+    const pano = panorama.getPano();
+    if (!_nmpzPanoId) {
+      // First fire after loadRound → this is the starting panorama, lock it.
+      _nmpzPanoId = pano;
+    } else if (pano !== _nmpzPanoId) {
+      // User navigated away — snap back.
+      panorama.setPano(_nmpzPanoId);
+    }
   });
 }
 
