@@ -1,5 +1,6 @@
 # GeoGuessr Mini
 
+Play here: https://geoguessr-mini.vercel.app/
 A browser-based GeoGuessr clone. Drop into a random Google Street View anywhere in the world, place your guess on the map, and score points based on how close you are. 5 rounds, up to 25,000 points.
 
 ## Features
@@ -12,21 +13,6 @@ A browser-based GeoGuessr clone. Drop into a random Google Street View anywhere 
 - **Keyboard shortcuts** — `Space` toggle map, `Enter` guess, `→` next round, `Esc` exit
 - **Leaderboard** — Google OAuth via Supabase, filter by mode/difficulty
 - **Share card** — copyable emoji result with seed for replay
-
-## Setup
-
-```bash
-cp .env.example .env
-# fill in GOOGLE_MAPS_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY
-npm run dev
-# open http://localhost:3000
-```
-
-Needs a [Google Maps JS API key](https://console.cloud.google.com) with Street View, Maps JS, and Geometry enabled. Supabase is optional (disables leaderboard/auth if absent).
-
-## Deploy
-
-Push to GitHub and connect to [Vercel](https://vercel.com). Set the three env vars in the Vercel dashboard — done.
 
 ## Stack
 
